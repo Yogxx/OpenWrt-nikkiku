@@ -1,16 +1,26 @@
 name: release-packages
 
 on:
-  workflow_dispatch:
   push:
     tags:
-      - v*
+      - 'v*'
+
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag release (contoh: v1.0.0)"
+        required: true
+        default: "v0.0.0"
+
+env:
+  FEEDNAME: nikki
+  PACKAGES: luci-app-nikki
 
 jobs:
-  release:
-    name: ${{ matrix.arch }}-${{ matrix.branch }} release
+  build:
+    name: build ${{ matrix.arch }} ${{ matrix.branch }}
     runs-on: ubuntu-latest
-    continue-on-error: true
+
     strategy:
       fail-fast: false
       matrix:
@@ -21,66 +31,105 @@ jobs:
           - openwrt-25.12
 
     steps:
-      - name: checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: build
+      # ================= CACHE SDK =================
+      - name: cache openwrt sdk
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache
+            dl
+            staging_dir
+            build_dir
+          key: sdk-${{ matrix.arch }}-${{ matrix.branch }}
+
+      # ================= BUILD =================
+      - name: build packages
         uses: openwrt/gh-action-sdk@main
         env:
           ARCH: ${{ matrix.arch }}-${{ matrix.branch }}
-          FEEDNAME: nikki
-          PACKAGES: luci-app-nikki
+          FEEDNAME: ${{ env.FEEDNAME }}
+          PACKAGES: ${{ env.PACKAGES }}
           INDEX: 1
           KEY_BUILD: ${{ secrets.KEY_BUILD }}
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           NO_REFRESH_CHECK: true
 
-      - name: compress
+      # ================= PACKAGE =================
+      - name: compress artifacts
         run: |
-          tar -c -z -f nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz -C bin/packages/${{ matrix.arch }}/nikki .
+          tar -czf nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz \
+            -C bin/packages/${{ matrix.arch }}/${{ env.FEEDNAME }} .
+
           mkdir -p public/${{ matrix.branch }}/${{ matrix.arch }}
-          mv bin/packages/${{ matrix.arch }}/nikki public/${{ matrix.branch }}/${{ matrix.arch }}
-          tar -c -z -f feed_nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz public/${{ matrix.branch }}/${{ matrix.arch }}
+          mv bin/packages/${{ matrix.arch }}/${{ env.FEEDNAME }} \
+            public/${{ matrix.branch }}/${{ matrix.arch }}
 
-      - if: github.event_name == 'push' && startsWith(github.ref_name, 'v')
-        name: release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz
+          tar -czf feed_nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz public
 
-      - name: upload
+      # ================= UPLOAD =================
+      - name: upload release artifact
         uses: actions/upload-artifact@v4
         with:
-          name: feed_nikki_${{ matrix.arch }}-${{ matrix.branch }}
+          name: release_${{ matrix.arch }}_${{ matrix.branch }}
+          path: nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz
+
+      - name: upload feed artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: feed_${{ matrix.arch }}_${{ matrix.branch }}
           path: feed_nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz
 
-  feed:
-    needs: release
-    name: feed
+  # ================= GITHUB RELEASE =================
+  github-release:
+    name: github release
+    needs: build
     runs-on: ubuntu-latest
 
     steps:
-      - name: download
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          pattern: feed_nikki_*
+          pattern: release_*
           merge-multiple: true
-      
-      - name: uncompress
+
+      - name: publish github release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: nikki_*.tar.gz
+
+  # ================= DEPLOY FEED =================
+  feed:
+    name: deploy feed
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: feed_*
+          merge-multiple: true
+
+      - name: extract feed
         run: |
-          for file in feed_nikki_*.tar.gz; do tar -x -z -f "$file"; done
-      
-      - name: prepare
+          for f in feed_nikki_*.tar.gz; do
+            tar -xzf "$f"
+          done
+
+      - name: prepare index
         run: |
           echo "${{ secrets.KEY_BUILD_PUB }}" > public/key-build.pub
           echo "${{ secrets.PUBLIC_KEY }}" > public/public-key.pem
-          tree --dirsfirst --sort name -P '*.apk|*.ipk' --prune --noreport -H "" -T "Nikki's Feed" --charset utf-8 -o public/index.html public
+          tree --dirsfirst --sort name -P '*.apk|*.ipk' --prune --noreport \
+            -H "" -T "Nikki's Feed" --charset utf-8 \
+            -o public/index.html public
           sed -i '/<p class="VERSION">/,/<\/p>/d' public/index.html
 
-      - name: feed
+      - name: deploy to cloudflare pages
         uses: cloudflare/wrangler-action@v3
         with:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           command: pages deploy public --project-name=nikkinikki
+          
