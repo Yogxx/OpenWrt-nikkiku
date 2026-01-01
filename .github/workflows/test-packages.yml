@@ -15,9 +15,19 @@ jobs:
       fail-fast: false
       matrix:
         arch:
+          - arm_cortex-a9
+          - aarch64_cortex-a53
+          - aarch64_cortex-a72
+          - aarch64_cortex-a76
           - aarch64_generic
+          - x86_64
         branch:
+          - openwrt-23.05
           - openwrt-24.10
+          - openwrt-25.12
+        exclude:
+          - arch: aarch64_cortex-a76
+            branch: openwrt-23.05
 
     steps:
       - uses: actions/checkout@v4
