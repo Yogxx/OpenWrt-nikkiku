@@ -1,0 +1,92 @@
+name: test-packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - v*
+
+jobs:
+  build:
+    name: build ${{ matrix.arch }}-${{ matrix.branch }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - arm_cortex-a5_vfpv4
+          - arm_cortex-a7_neon-vfpv4
+          - arm_cortex-a8_vfpv3
+          - arm_cortex-a9
+          - arm_cortex-a9_vfpv3-d16
+          - arm_cortex-a9_neon
+          - arm_cortex-a15_neon-vfpv4
+          - aarch64_cortex-a53
+          - aarch64_cortex-a72
+          - aarch64_cortex-a76
+          - aarch64_generic
+          - mips_24kc
+          - mips_4kec
+          - mips_mips32
+          - mipsel_24kc
+          - mipsel_24kc_24kf
+          - mipsel_74kc
+          - mipsel_mips32
+          - mips64_octeonplus
+          - i386_pentium4
+          - x86_64
+        branch:
+          - openwrt-23.05
+          - openwrt-24.10
+          - openwrt-25.12
+          - SNAPSHOT
+        exclude:
+          - arch: aarch64_cortex-a76
+            branch: openwrt-23.05
+          - arch: mips_4kec
+            branch: openwrt-25.12
+          - arch: mips_4kec
+            branch: SNAPSHOT
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build
+        uses: openwrt/gh-action-sdk@main
+        env:
+          ARCH: ${{ matrix.arch }}-${{ matrix.branch }}
+          FEEDNAME: nikki
+          PACKAGES: luci-app-nikki
+          INDEX: 1
+          KEY_BUILD: ${{ secrets.KEY_BUILD }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          NO_REFRESH_CHECK: true
+
+      - name: compress
+        run: |
+          tar -czf nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz \
+            -C bin/packages/${{ matrix.arch }}/nikki .
+
+      - name: upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nikki_${{ matrix.arch }}-${{ matrix.branch }}
+          path: nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz
+
+  release:
+    name: github release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref_name, 'v')
+
+    steps:
+      - name: download artifacts
+        uses: actions/download-artifact@v4
+
+      - name: release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            **/*.tar.gz
+            
