@@ -1,0 +1,39 @@
+name: build-packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "OpenWrt branch"
+        required: true
+        default: "openwrt-24.10"
+      arch:
+        description: "Target arch"
+        required: true
+        default: "x86_64"
+
+env:
+  FEEDNAME: nikki
+  PACKAGES: luci-app-nikki
+
+jobs:
+  build:
+    name: test build ${{ inputs.arch }} ${{ inputs.branch }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build packages (test)
+        uses: openwrt/gh-action-sdk@main
+        env:
+          ARCH: ${{ inputs.arch }}-${{ inputs.branch }}
+          FEEDNAME: ${{ env.FEEDNAME }}
+          PACKAGES: ${{ env.PACKAGES }}
+          INDEX: 0
+          NO_REFRESH_CHECK: true
+
+      - name: collect result
+        run: |
+          find bin/packages -type f -name "*.ipk" || true
+          
