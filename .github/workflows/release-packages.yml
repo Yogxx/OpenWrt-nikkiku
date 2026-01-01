@@ -1,98 +1,106 @@
-name: nikki-packages
+name: testing-packages
 
 on:
-  workflow_dispatch:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag release"
+        required: true
+        default: "v0.0.0"
+
+env:
+  FEEDNAME: nikki
+  PACKAGES: luci-app-nikki
 
 jobs:
   build:
     name: build ${{ matrix.arch }} ${{ matrix.branch }}
     runs-on: ubuntu-latest
+
     strategy:
       fail-fast: false
       matrix:
-        arch: [aarch64_generic, x86_64]
-        branch: [openwrt-24.10, openwrt-25.12]
+        arch:
+          - aarch64_generic
+        branch:
+          - openwrt-24.10
 
     steps:
       - uses: actions/checkout@v4
 
-      # 🔥 CACHE SDK (dl + toolchain)
       - name: cache openwrt sdk
         uses: actions/cache@v4
         with:
           path: |
-            dl
-            build_dir/hostpkg
-            staging_dir/host
-            staging_dir/toolchain-*
-          key: openwrt-sdk-${{ matrix.arch }}-${{ matrix.branch }}
+            ${{ github.workspace }}/dl
+            ${{ github.workspace }}/staging_dir
+            ${{ github.workspace }}/build_dir
+          key: ${{ runner.os }}-sdk-${{ matrix.arch }}-${{ matrix.branch }}-${{ hashFiles('Makefile', '**.mk') }}
           restore-keys: |
-            openwrt-sdk-${{ matrix.arch }}-
-
-      # ⚡ CACHE CCACHE
-      - name: cache ccache
-        uses: actions/cache@v4
-        with:
-          path: .ccache
-          key: ccache-${{ matrix.arch }}-${{ matrix.branch }}
-          restore-keys: |
-            ccache-${{ matrix.arch }}-
+            ${{ runner.os }}-sdk-${{ matrix.arch }}-${{ matrix.branch }}-
 
       - name: build packages
         uses: openwrt/gh-action-sdk@main
         env:
           ARCH: ${{ matrix.arch }}-${{ matrix.branch }}
-          FEEDNAME: nikki
-          PACKAGES: luci-app-nikki
+          FEEDNAME: ${{ env.FEEDNAME }}
+          PACKAGES: ${{ env.PACKAGES }}
           INDEX: 1
           KEY_BUILD: ${{ secrets.KEY_BUILD }}
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           NO_REFRESH_CHECK: true
-          USE_CCACHE: 1
 
-      - name: compress release
+      - name: prepare package artifacts
         run: |
+          # Package the built packages
           tar -czf nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz \
-            -C bin/packages/${{ matrix.arch }}/nikki .
+            -C bin/packages/${{ matrix.arch }}/${{ env.FEEDNAME }} .
+          
+          # Prepare feed directory structure
+          mkdir -p feed_output/${{ matrix.branch }}/${{ matrix.arch }}
+          cp -r bin/packages/${{ matrix.arch }}/${{ env.FEEDNAME }}/* \
+            feed_output/${{ matrix.branch }}/${{ matrix.arch }}/
+          
+          # Create Packages.gz
+          cd feed_output/${{ matrix.branch }}/${{ matrix.arch }}
+          gzip -c Packages > Packages.gz
+          cd -
 
-      - name: prepare feed
-        run: |
-          mkdir -p public/${{ matrix.branch }}/${{ matrix.arch }}
-          mv bin/packages/${{ matrix.arch }}/nikki \
-            public/${{ matrix.branch }}/${{ matrix.arch }}
-          tar -czf feed_nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz public
-
-      - name: upload release artifact
+      - name: upload package artifact
         uses: actions/upload-artifact@v4
         with:
-          name: release_files_${{ matrix.arch }}_${{ matrix.branch }}
+          name: package_${{ matrix.arch }}_${{ matrix.branch }}
           path: nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz
+          retention-days: 1
 
       - name: upload feed artifact
         uses: actions/upload-artifact@v4
         with:
-          name: feed_files_${{ matrix.arch }}_${{ matrix.branch }}
-          path: feed_nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz
+          name: feed_${{ matrix.arch }}_${{ matrix.branch }}
+          path: feed_output/
+          retention-days: 1
 
   github-release:
     name: github release
-    if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event.inputs.tag
 
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: release_files_*
-          merge-multiple: true
+          pattern: package_*
+          path: packages
+          merge-multiple: false
 
       - name: publish github release
         uses: softprops/action-gh-release@v2
         with:
-          files: nikki_*.tar.gz
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: packages/*/*.tar.gz
 
   feed:
     name: deploy feed
@@ -102,28 +110,36 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: feed_files_*
-          merge-multiple: true
+          pattern: feed_*
+          path: feed_artifacts
+          merge-multiple: false
 
-      - name: extract feed
+      - name: merge and prepare feed
         run: |
-          for f in feed_nikki_*.tar.gz; do
-            tar -xzf "$f"
-          done
-
-      - name: prepare index
-        run: |
-          echo "${{ secrets.KEY_BUILD_PUB }}" > public/key-build.pub
-          echo "${{ secrets.PUBLIC_KEY }}" > public/public-key.pem
+          mkdir -p merged_feed
+          
+          # Merge all feed artifacts
+          find feed_artifacts -type f -name "Packages" -o -name "Packages.gz" -o -name "*.ipk" -o -name "*.apk" | \
+            while read -r file; do
+              rel_path=${file#feed_artifacts/}
+              rel_path=${rel_path#*/}
+              mkdir -p "$(dirname "merged_feed/$rel_path")"
+              cp "$file" "merged_feed/$rel_path"
+            done
+          
+          # Add keys
+          echo "${{ secrets.KEY_BUILD_PUB }}" > merged_feed/key-build.pub
+          echo "${{ secrets.PUBLIC_KEY }}" > merged_feed/public-key.pem
+          
+          # Generate index.html
           tree --dirsfirst --sort name -P '*.apk|*.ipk' --prune --noreport \
             -H "" -T "Nikki's Feed" --charset utf-8 \
-            -o public/index.html public
-          sed -i '/<p class="VERSION">/,/<\/p>/d' public/index.html
+            -o merged_feed/index.html merged_feed
+          sed -i '/<p class="VERSION">/,/<\/p>/d' merged_feed/index.html
 
       - name: deploy to cloudflare pages
         uses: cloudflare/wrangler-action@v3
         with:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          command: pages deploy public --project-name=nikkinikki
-          
+          command: pages deploy merged_feed --project-name=nikkinikki
