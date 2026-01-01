@@ -1,4 +1,4 @@
-name: testing-packages
+name: release-packages
 
 on:
   push:
@@ -24,9 +24,19 @@ jobs:
       fail-fast: false
       matrix:
         arch:
+          - arm_cortex-a9
+          - aarch64_cortex-a53
+          - aarch64_cortex-a72
+          - aarch64_cortex-a76
           - aarch64_generic
+          - x86_64
         branch:
+          - openwrt-23.05
           - openwrt-24.10
+          - openwrt-25.12
+        exclude:
+          - arch: aarch64_cortex-a76
+            branch: openwrt-23.05
 
     steps:
       - uses: actions/checkout@v4
@@ -53,35 +63,55 @@ jobs:
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           NO_REFRESH_CHECK: true
 
-      - name: prepare package artifacts
+      - name: create single artifact
         run: |
-          # Package the built packages
-          tar -czf nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz \
+          # Buat folder artifact utama
+          mkdir -p artifact_${{ matrix.arch }}_${{ matrix.branch }}
+          
+          # ====== 1. PACKAGE FILE ======
+          # Buat package archive untuk GitHub Release
+          tar -czf artifact_${{ matrix.arch }}_${{ matrix.branch }}/nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz \
             -C bin/packages/${{ matrix.arch }}/${{ env.FEEDNAME }} .
           
-          # Prepare feed directory structure
-          mkdir -p feed_output/${{ matrix.branch }}/${{ matrix.arch }}
-          cp -r bin/packages/${{ matrix.arch }}/${{ env.FEEDNAME }}/* \
-            feed_output/${{ matrix.branch }}/${{ matrix.arch }}/
+          # ====== 2. FEED FILES ======
+          # Salin semua file feed untuk arch+branch ini
+          FEED_DIR="artifact_${{ matrix.arch }}_${{ matrix.branch }}/feed_parts/${{ matrix.branch }}/${{ matrix.arch }}"
+          mkdir -p "$FEED_DIR"
+          cp -r bin/packages/${{ matrix.arch }}/${{ env.FEEDNAME }}/* "$FEED_DIR"/
           
-          # Create Packages.gz
-          cd feed_output/${{ matrix.branch }}/${{ matrix.arch }}
+          # Buat Packages.gz untuk feed
+          cd "$FEED_DIR"
           gzip -c Packages > Packages.gz
           cd -
+          
+          # ====== 3. METADATA ======
+          # Simpan informasi build untuk referensi
+          echo "ARCH: ${{ matrix.arch }}" > artifact_${{ matrix.arch }}_${{ matrix.branch }}/build_info.txt
+          echo "BRANCH: ${{ matrix.branch }}" >> artifact_${{ matrix.arch }}_${{ matrix.branch }}/build_info.txt
+          echo "FEEDNAME: ${{ env.FEEDNAME }}" >> artifact_${{ matrix.arch }}_${{ matrix.branch }}/build_info.txt
+          echo "PACKAGES: ${{ env.PACKAGES }}" >> artifact_${{ matrix.arch }}_${{ matrix.branch }}/build_info.txt
+          echo "TIMESTAMP: $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> artifact_${{ matrix.arch }}_${{ matrix.branch }}/build_info.txt
+          
+          # ====== 4. VERIFIKASI ======
+          # Cek isi artifact untuk debugging
+          echo "=== Artifact Structure ==="
+          find artifact_${{ matrix.arch }}_${{ matrix.branch }} -type f | sort
+          echo ""
+          echo "=== Package Archive Contents ==="
+          tar -tzf artifact_${{ matrix.arch }}_${{ matrix.branch }}/nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz | head -5
+          echo "..."
+          
+          # Hitung total file
+          PACKAGE_COUNT=$(find bin/packages/${{ matrix.arch }}/${{ env.FEEDNAME }} -name "*.ipk" -o -name "*.apk" | wc -l)
+          echo "Built $PACKAGE_COUNT package(s)"
 
-      - name: upload package artifact
+      - name: upload single artifact
         uses: actions/upload-artifact@v4
         with:
-          name: package_${{ matrix.arch }}_${{ matrix.branch }}
-          path: nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz
-          retention-days: 1
-
-      - name: upload feed artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: feed_${{ matrix.arch }}_${{ matrix.branch }}
-          path: feed_output/
-          retention-days: 1
+          name: artifact_${{ matrix.arch }}_${{ matrix.branch }}
+          path: artifact_${{ matrix.arch }}_${{ matrix.branch }}/
+          retention-days: 7
+          if-no-files-found: error
 
   github-release:
     name: github release
@@ -92,54 +122,157 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: package_*
-          path: packages
+          pattern: artifact_*
+          path: all_artifacts
           merge-multiple: false
+
+      - name: prepare release packages
+        run: |
+          # Buat folder untuk release
+          mkdir -p release_packages
+          
+          # Kumpulkan semua package tar.gz
+          for artifact_dir in all_artifacts/*/; do
+            if [ -d "$artifact_dir" ]; then
+              # Cari file package tar.gz
+              find "$artifact_dir" -name "nikki_*.tar.gz" -type f | while read -r pkg_file; do
+                cp "$pkg_file" release_packages/
+              done
+            fi
+          done
+          
+          # Verifikasi
+          echo "=== Packages for Release ==="
+          ls -la release_packages/
+          echo ""
+          echo "Total packages: $(ls release_packages/*.tar.gz 2>/dev/null | wc -l || echo 0)"
 
       - name: publish github release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
-          files: packages/*/*.tar.gz
+          files: release_packages/nikki_*.tar.gz
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}
 
   feed:
     name: deploy feed
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
 
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: feed_*
-          path: feed_artifacts
+          pattern: artifact_*
+          path: all_artifacts
           merge-multiple: false
 
-      - name: merge and prepare feed
+      - name: merge all feed parts
         run: |
-          mkdir -p merged_feed
+          # Buat folder feed final
+          mkdir -p final_feed
           
-          # Merge all feed artifacts
-          find feed_artifacts -type f -name "Packages" -o -name "Packages.gz" -o -name "*.ipk" -o -name "*.apk" | \
-            while read -r file; do
-              rel_path=${file#feed_artifacts/}
-              rel_path=${rel_path#*/}
-              mkdir -p "$(dirname "merged_feed/$rel_path")"
-              cp "$file" "merged_feed/$rel_path"
-            done
+          # Gabungkan semua feed_parts dari semua artifacts
+          echo "Merging feed parts from all artifacts..."
           
-          # Add keys
-          echo "${{ secrets.KEY_BUILD_PUB }}" > merged_feed/key-build.pub
-          echo "${{ secrets.PUBLIC_KEY }}" > merged_feed/public-key.pem
+          for artifact_dir in all_artifacts/*/; do
+            if [ -d "${artifact_dir}feed_parts" ]; then
+              echo "Processing: $(basename "$artifact_dir")"
+              
+              # Copy semua file dari feed_parts
+              find "${artifact_dir}feed_parts" -type f \( -name "*.ipk" -o -name "*.apk" -o -name "Packages" -o -name "Packages.gz" \) | \
+                while read -r feed_file; do
+                  # Hitung path relatif untuk organisasi yang rapi
+                  rel_path="${feed_file#${artifact_dir}feed_parts/}"
+                  target_dir="final_feed/$(dirname "$rel_path")"
+                  
+                  mkdir -p "$target_dir"
+                  cp "$feed_file" "$target_dir/"
+                  
+                  echo "  Copied: $rel_path"
+                done
+            fi
+          done
           
-          # Generate index.html
-          tree --dirsfirst --sort name -P '*.apk|*.ipk' --prune --noreport \
-            -H "" -T "Nikki's Feed" --charset utf-8 \
-            -o merged_feed/index.html merged_feed
-          sed -i '/<p class="VERSION">/,/<\/p>/d' merged_feed/index.html
+          # Verifikasi struktur
+          echo ""
+          echo "=== Final Feed Structure ==="
+          find final_feed -type f -name "*.ipk" -o -name "*.apk" | sort
+          echo ""
+          echo "Total IPK/APK files: $(find final_feed -type f \( -name "*.ipk" -o -name "*.apk" \) | wc -l)"
+          echo "Total Packages files: $(find final_feed -type f -name "Packages" | wc -l)"
+          echo "Total Packages.gz files: $(find final_feed -type f -name "Packages.gz" | wc -l)"
+
+      - name: create feed index and keys
+        run: |
+          # Tambahkan public keys
+          echo "${{ secrets.KEY_BUILD_PUB }}" > final_feed/key-build.pub
+          echo "${{ secrets.PUBLIC_KEY }}" > final_feed/public-key.pem
+          
+          # Buat README
+          cat > final_feed/README.md << 'EOF'
+          # Nikki's OpenWrt Feed
+          
+          This feed contains packages for various OpenWrt versions and architectures.
+          
+          ## Usage
+          Add to your feeds.conf:
+          ```
+          src/gz nikki https://nikkinikki.pages.dev
+          ```
+          
+          ## Available Packages
+          - luci-app-nikki
+          
+          ## Supported Architectures
+          - arm_cortex-a9
+          - aarch64_cortex-a53
+          - aarch64_cortex-a72
+          - aarch64_cortex-a76
+          - aarch64_generic
+          - x86_64
+          
+          ## Supported OpenWrt Versions
+          - openwrt-23.05
+          - openwrt-24.10
+          - openwrt-25.12
+          
+          Last updated: $(date -u)
+          EOF
+          
+          # Generate HTML index
+          echo "Generating HTML index..."
+          tree --dirsfirst --sort name -P '*.apk|*.ipk|*.pub|*.pem|*.md' --prune --noreport \
+            -H "" -T "Nikki's OpenWrt Package Feed" --charset utf-8 \
+            -o final_feed/index.html final_feed
+          
+          # Remove tree version info
+          sed -i '/<p class="VERSION">/,/<\/p>/d' final_feed/index.html
+          
+          # Tambahkan styling
+          sed -i 's|<head>|<head>\n<style>\nbody { font-family: Arial, sans-serif; margin: 20px; }\nh1 { color: #333; }\na { color: #0366d6; text-decoration: none; }\na:hover { text-decoration: underline; }\nul { padding-left: 20px; }\n</style>|' final_feed/index.html
+          
+          echo "Feed preparation complete!"
+
+      - name: verify feed structure
+        run: |
+          echo "=== Final Verification ==="
+          ls -la final_feed/
+          echo ""
+          echo "=== Key Files ==="
+          ls -la final_feed/*.pub final_feed/*.pem final_feed/*.html final_feed/*.md 2>/dev/null || true
+          echo ""
+          echo "=== Feed Directories ==="
+          find final_feed -type d -name "openwrt-*" | sort
 
       - name: deploy to cloudflare pages
         uses: cloudflare/wrangler-action@v3
         with:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          command: pages deploy merged_feed --project-name=nikkinikki
+          command: pages deploy final_feed --project-name=nikkinikki
