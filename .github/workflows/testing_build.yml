@@ -1,4 +1,4 @@
-name: testing-build
+name: test-packages
 
 on:
   workflow_dispatch:
@@ -6,11 +6,25 @@ on:
       branch:
         description: "OpenWrt branch"
         required: true
-        default: "openwrt-24.10"
+        type: choice
+        options:
+          - openwrt-23.05
+          - openwrt-24.10
+          - openwrt-25.12
+        default: openwrt-24.10
+
       arch:
-        description: "Target arch"
+        description: "Target architecture"
         required: true
-        default: "x86_64"
+        type: choice
+        options:
+          - arm_cortex-a9
+          - aarch64_cortex-a53
+          - aarch64_cortex-a72
+          - aarch64_cortex-a76
+          - aarch64_generic
+          - x86_64
+        default: x86_64
 
 env:
   FEEDNAME: nikki
@@ -24,6 +38,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: show selected target
+        run: |
+          echo "OpenWrt branch : ${{ inputs.branch }}"
+          echo "Target arch    : ${{ inputs.arch }}"
+
       - name: build packages (test)
         uses: openwrt/gh-action-sdk@main
         env:
@@ -33,7 +52,8 @@ jobs:
           INDEX: 0
           NO_REFRESH_CHECK: true
 
-      - name: collect result
+      - name: list built packages
         run: |
-          find bin/packages -type f -name "*.ipk" || true
+          echo "Built packages:"
+          find bin/packages -type f \( -name "*.ipk" -o -name "*.apk" \) || true
           
