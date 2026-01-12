@@ -76,9 +76,6 @@ jobs:
       - name: Upload Telegram
         if: env.UPLOAD_TELEGRAM == 'true'
         run: |
-          echo "Delay"
-          sleep 60
-          
           curl -s -F document=@nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz \
             -F chat_id=${{ secrets.TG_CHAT_ID }} \
             -F caption="📦 Nikki ${RELEASE_TAG} | ${{ matrix.arch }} | ${{ matrix.branch }}" \
