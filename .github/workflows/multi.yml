@@ -66,7 +66,6 @@ jobs:
           tar -czf feed_nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz \
             public/${{ matrix.branch }}/${{ matrix.arch }}
 
-      # ===== GitHub Release (OPSIONAL) =====
       - name: Upload GitHub Release
         if: env.UPLOAD_RELEASE == 'true'
         uses: softprops/action-gh-release@v2
@@ -74,10 +73,12 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           files: nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz
 
-      # ===== Telegram Upload (OPSIONAL) =====
       - name: Upload Telegram
         if: env.UPLOAD_TELEGRAM == 'true'
         run: |
+          echo "Delay 60 Detik"
+          sleep 60
+          
           curl -s -F document=@nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz \
             -F chat_id=${{ secrets.TG_CHAT_ID }} \
             -F caption="📦 Nikki ${RELEASE_TAG} | ${{ matrix.arch }} | ${{ matrix.branch }}" \
