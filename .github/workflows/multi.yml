@@ -28,9 +28,6 @@ jobs:
   release:
     name: ${{ matrix.arch }}-${{ matrix.branch }} release
     runs-on: ubuntu-latest
-    concurrency:
-      group: telegram-upload
-      cancel-in-progress: false
 
     strategy:
       fail-fast: false
@@ -79,7 +76,7 @@ jobs:
       - name: Upload Telegram
         if: env.UPLOAD_TELEGRAM == 'true'
         run: |
-          echo "Delay 60 Detik"
+          echo "Delay"
           sleep 60
           
           curl -s -F document=@nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz \
