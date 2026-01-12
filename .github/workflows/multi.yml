@@ -28,6 +28,9 @@ jobs:
   release:
     name: ${{ matrix.arch }}-${{ matrix.branch }} release
     runs-on: ubuntu-latest
+    concurrency:
+      group: telegram-upload
+      cancel-in-progress: false
 
     strategy:
       fail-fast: false
