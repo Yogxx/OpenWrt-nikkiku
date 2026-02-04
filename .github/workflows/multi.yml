@@ -1,0 +1,126 @@
+name: multi-nikki-packages
+
+on:
+  push:
+    tags:
+      - v*
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag release"
+        required: true
+        default: "v0.0.0"
+      upload_release:
+        description: "Upload ke GitHub Release?"
+        type: boolean
+        default: true
+      upload_telegram:
+        description: "Upload ke Telegram?"
+        type: boolean
+        default: false
+
+env:
+  UPLOAD_RELEASE: ${{ github.event_name == 'push' && 'true' || github.event.inputs.upload_release }}
+  UPLOAD_TELEGRAM: ${{ github.event.inputs.upload_telegram || 'false' }}
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  release:
+    name: ${{ matrix.arch }}-${{ matrix.branch }} release
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - aarch64_generic
+          - aarch64_cortex-a72
+          - x86_64
+        branch:
+          - openwrt-24.10
+          - openwrt-25.12
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build packages
+        uses: openwrt/gh-action-sdk@main
+        env:
+          ARCH: ${{ matrix.arch }}-${{ matrix.branch }}
+          FEEDNAME: nikki
+          PACKAGES: luci-app-nikki
+          INDEX: 1
+          KEY_BUILD: ${{ secrets.KEY_BUILD }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          NO_REFRESH_CHECK: true
+
+      - name: Compress output
+        run: |
+          tar -czf nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz \
+            -C bin/packages/${{ matrix.arch }}/nikki .
+
+          mkdir -p public/${{ matrix.branch }}/${{ matrix.arch }}
+          mv bin/packages/${{ matrix.arch }}/nikki \
+            public/${{ matrix.branch }}/${{ matrix.arch }}
+
+          tar -czf feed_nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz \
+            public/${{ matrix.branch }}/${{ matrix.arch }}
+
+      - name: Upload GitHub Release
+        if: env.UPLOAD_RELEASE == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          files: nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz
+
+      - name: Upload Telegram
+        if: env.UPLOAD_TELEGRAM == 'true'
+        run: |
+          curl -s -F document=@nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz \
+            -F chat_id=${{ secrets.TG_CHAT_ID }} \
+            -F caption="📦 Nikki ${RELEASE_TAG} | ${{ matrix.arch }} | ${{ matrix.branch }}" \
+            https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendDocument
+
+      - name: Upload feed artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: feed_nikki_${{ matrix.arch }}-${{ matrix.branch }}
+          path: feed_nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz
+
+  feed:
+    name: Deploy feed
+    needs: release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: feed_nikki_*
+          merge-multiple: true
+
+      - name: Extract feeds
+        run: |
+          for f in feed_nikki_*.tar.gz; do
+            tar -xzf "$f"
+          done
+
+      - name: Prepare index
+        run: |
+          echo "${{ secrets.KEY_BUILD_PUB }}" > public/key-build.pub
+          echo "${{ secrets.PUBLIC_KEY }}" > public/public-key.pem
+
+          tree --dirsfirst --sort name -P '*.apk|*.ipk' --prune --noreport \
+            -H "" -T "Nikki's Feed" --charset utf-8 \
+            -o public/index.html public
+
+          sed -i '/<p class="VERSION">/,/<\/p>/d' public/index.html
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          command: pages deploy public --project-name=nikkinikki
+          
