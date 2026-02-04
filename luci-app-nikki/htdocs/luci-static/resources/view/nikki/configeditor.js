@@ -39,7 +39,6 @@ return view.extend({
           try {
             const st = await fs.stat(`${item.base}/${file}`);
             if (st && st.type === 'file') {
-              /* file ada → pakai URL dengan etc%2Fnikki */
               return item.urls[0];
             }
           } catch (e) {}
