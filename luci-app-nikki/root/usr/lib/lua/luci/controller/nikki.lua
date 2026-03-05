@@ -3,7 +3,7 @@ module("luci.controller.nikki", package.seeall)
 function index()
     -- Menu utama di LuCI
     entry({"admin", "services", "nikki"}, firstchild(), _("Nikki"), 90)
-    entry({"admin", "services", "nikki", "backup"}, template("backup"), _("Backup"), 45).leaf = true
+    entry({"admin", "services", "nikki", "backup"}, template("nikki"), _("Backup"), 45).leaf = true
     entry({"admin", "services", "nikki", "do_backup"}, call("action_backup")).leaf = true
     entry({"admin", "services", "nikki", "do_restore"}, call("action_restore")).leaf = true
 end
