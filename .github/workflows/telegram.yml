@@ -32,7 +32,7 @@ jobs:
           elif [ "${{ github.event_name }}" = "push" ]; then
             echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
           else
-            PKG_VERSION=$(curl -fsSL https://raw.githubusercontent.com/nikki-nobita/nikki/main/luci-app-nikki/Makefile \
+            PKG_VERSION=$(curl -fsSL https://raw.githubusercontent.com/Yogxx/OpenWrt-nikkiku/refs/heads/main/luci-app-nikki/Makefile \
               | grep -m1 'PKG_VERSION:=' | cut -d'=' -f2 | tr -d ' ')
             echo "tag=v${PKG_VERSION}" >> $GITHUB_OUTPUT
           fi
