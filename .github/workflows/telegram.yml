@@ -9,7 +9,7 @@ on:
       tag:
         description: "Tag release"
         required: false
-        default: ""
+        default: "v1.25.x"
 
 env:
   UPLOAD_TELEGRAM: ${{ github.event_name == 'push' && 'true' || 'false' }}
