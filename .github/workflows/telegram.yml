@@ -10,9 +10,13 @@ on:
         description: "Tag release"
         required: false
         default: ""
+      upload_telegram:
+        description: "Upload ke Telegram?"
+        type: boolean
+        default: false
 
 env:
-  UPLOAD_TELEGRAM: ${{ github.event_name == 'push' && 'true' || 'false' }}
+  UPLOAD_TELEGRAM: ${{ github.event_name == 'push' && 'true' || github.event.inputs.upload_telegram }}
 
 jobs:
   get-version:
