@@ -1,4 +1,4 @@
-name: release-packages
+name: tele
 
 on:
   workflow_dispatch:
