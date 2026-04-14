@@ -1,26 +1,14 @@
-name: tele
+name: tele-packages
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v1.26.0)'
+        required: true
 
 jobs:
-  get-version:
-    name: get-version
-    runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.get-tag.outputs.tag }}
-    steps:
-      - name: checkout
-        uses: actions/checkout@v6
-
-      - name: get-tag
-        id: get-tag
-        run: |
-          TAG=$(git describe --tags --abbrev=0)
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-
   release:
-    needs: get-version
     name: ${{ matrix.arch }}-${{ matrix.branch }} release
     runs-on: ubuntu-latest
     continue-on-error: true
@@ -64,7 +52,7 @@ jobs:
         run: |
           curl -s -F document=@nikki_${{ matrix.arch }}-${{ matrix.branch }}.tar.gz \
             -F chat_id=${{ secrets.TG_CHAT_ID }} \
-            -F caption="📦 Nikki ${{ needs.get-version.outputs.tag }} | ${{ matrix.arch }} | ${{ matrix.branch }}" \
+            -F caption="📦 Nikki ${{ github.event.inputs.version }} | ${{ matrix.arch }} | ${{ matrix.branch }}" \
             https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendDocument
 
       - name: upload
@@ -102,3 +90,4 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           command: pages deploy public --project-name=nikkinikki
+          
