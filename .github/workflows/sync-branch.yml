@@ -16,7 +16,7 @@ jobs:
           fetch-depth: 0
       - name: Fetch & push branch from upstream
         run: |
-          git remote add upstream https://github.com/nikkinikki-org/luci-app-nikki.git
+          git remote add upstream https://github.com/nikkinikki-org/OpenWrt-nikki.git
           git fetch upstream ${{ github.event.inputs.branch }}
           git checkout -b ${{ github.event.inputs.branch }} upstream/${{ github.event.inputs.branch }}
           git push origin ${{ github.event.inputs.branch }}
