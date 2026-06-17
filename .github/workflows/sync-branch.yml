@@ -1,0 +1,22 @@
+name: Sync Branch from Upstream
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Nama branch yang mau ditarik'
+        required: true
+        default: 'dependabot/mihomo-meta'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch & push branch from upstream
+        run: |
+          git remote add upstream https://github.com/nikkinikki-org/luci-app-nikki.git
+          git fetch upstream ${{ github.event.inputs.branch }}
+          git checkout -b ${{ github.event.inputs.branch }} upstream/${{ github.event.inputs.branch }}
+          git push origin ${{ github.event.inputs.branch }}
