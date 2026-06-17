@@ -37,5 +37,5 @@ jobs:
 
       - name: Push branch to fork
         run: |
-          git remote set-url origin https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/Yogxx/OpenWrt-nikki.git
+          git remote set-url origin https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/Yogxx/OpenWrt-nikkiku.git
           git push origin "${{ github.event.inputs.branch }}" --force
