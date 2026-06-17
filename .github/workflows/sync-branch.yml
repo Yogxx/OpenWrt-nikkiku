@@ -2,11 +2,6 @@ name: Sync Branch from Upstream
 
 on:
   workflow_dispatch:
-    inputs:
-      branch:
-        description: 'Nama branch yang mau ditarik'
-        required: true
-        default: 'dependabot/mihomo-meta'
 
 permissions:
   contents: write
@@ -14,6 +9,12 @@ permissions:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        branch:
+          - dependabot/mihomo-meta
+          - dependabot/mihomo-alpha
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -30,12 +31,12 @@ jobs:
         run: git remote add upstream https://github.com/nikkinikki-org/OpenWrt-nikki.git
 
       - name: Fetch branch from upstream
-        run: git fetch upstream "${{ github.event.inputs.branch }}"
+        run: git fetch upstream "${{ matrix.branch }}"
 
       - name: Checkout branch locally
-        run: git checkout -B "${{ github.event.inputs.branch }}" "upstream/${{ github.event.inputs.branch }}"
+        run: git checkout -B "${{ matrix.branch }}" "upstream/${{ matrix.branch }}"
 
       - name: Push branch to fork
         run: |
           git remote set-url origin https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/Yogxx/OpenWrt-nikkiku.git
-          git push origin "${{ github.event.inputs.branch }}" --force
+          git push origin "${{ matrix.branch }}" --force
