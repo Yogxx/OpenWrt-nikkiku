@@ -1,42 +1,49 @@
-name: Sync Branch from Upstream
+name: Sync Fork from Upstream
 
 on:
+  schedule:
+    - cron: '0 */6 * * *'   # tiap 6 jam
   workflow_dispatch:
 
 permissions:
   contents: write
+  actions: write
+
+env:
+  UPSTREAM_REPO: https://github.com/nikkinikki-org/OpenWrt-nikki.git
+  UPSTREAM_BRANCH: main
+  BUILD_WORKFLOW: build.yml
 
 jobs:
   sync:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        branch:
-          - dependabot/mihomo-meta
-          - dependabot/mihomo-alpha
     steps:
-      - name: Checkout repository
+      - name: Checkout fork
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.PAT_TOKEN }}
 
-      - name: Configure git identity
+      - name: Sync from upstream
+        id: sync
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Add upstream remote
-        run: git remote add upstream https://github.com/nikkinikki-org/OpenWrt-nikki.git
+          git remote add upstream "$UPSTREAM_REPO"
+          git fetch upstream "$UPSTREAM_BRANCH"
 
-      - name: Fetch branch from upstream
-        run: git fetch upstream "${{ matrix.branch }}"
+          if git merge-base --is-ancestor "upstream/$UPSTREAM_BRANCH" HEAD; then
+            echo "Already up to date"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
-      - name: Checkout branch locally
-        run: git checkout -B "${{ matrix.branch }}" "upstream/${{ matrix.branch }}"
+          git merge "upstream/$UPSTREAM_BRANCH" --no-edit
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
 
-      - name: Push branch to fork
-        run: |
-          git remote set-url origin https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/Yogxx/OpenWrt-nikkiku.git
-          git push origin "${{ matrix.branch }}" --force
+      - name: Trigger build
+        if: steps.sync.outputs.changed == 'true'
+        run: gh workflow run "$BUILD_WORKFLOW" --ref "$GITHUB_REF_NAME"
+        env:
+          GH_TOKEN: ${{ github.token }}
